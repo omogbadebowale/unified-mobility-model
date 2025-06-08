@@ -1,10 +1,9 @@
 # ======================================================
 # Unified Mobility Model Fitting for ZnO
-# Author: (Your Name)
+# Authors: Gbadebo Taofeek Yusuf, Sukhwinder Singh, Alexandros Askounis, Zlatka Stoeva, Fideline Tchuenbou-Magaia
 # Description: Model fitting code for ZnO using semi-empirical mobility model.
 # This code is part of the repository: Unified Mobility Model for Grain-Boundary-Limited Transport
-# ======================================================
-
+# =====================================================
 
 import numpy as np
 import matplotlib.pyplot as plt
