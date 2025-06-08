@@ -19,7 +19,6 @@ The model is demonstrated on multiple material systems:
 - Bi₂Te₃
 - Mg₂Si
 - SnSe
-- PbTe
 
 ---
 
@@ -27,7 +26,6 @@ The model is demonstrated on multiple material systems:
 
 - `Bi2Te3_Mobility_Model_Fitting.py`
 - `Mg2Si_Mobility_Model_Fitting.py`
-- `PbTe_Mobility_Model_Fitting.py`
 - `SnSe_Mobility_Model_Fitting.py`
 - `ZnO_Mobility_Model_Fitting.py`
 - `CITATION.md`
