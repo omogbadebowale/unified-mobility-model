@@ -1,4 +1,4 @@
-# Unified Mobility Model for Grain-Boundary-Limited Transport in Polycrystalline Thermoelectric Materials
+# Unified Mobility Model for Grain-Boundary-Limited Transport in Polycrystalline Materials
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15617024.svg)](https://doi.org/10.5281/zenodo.15617024)
 
