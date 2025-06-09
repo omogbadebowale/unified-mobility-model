@@ -10,8 +10,16 @@ st.title("📈 Unified Mobility Model Fitting for Polycrystalline Materials")
 uploaded_file = st.file_uploader("Upload CSV or TXT file with two columns: Temperature, Mobility", type=["csv", "txt"])
 
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file, delim_whitespace=True)
+    try:
+    df = pd.read_csv(uploaded_file, sep=None, engine='python')
     df.columns = df.columns.str.strip()
+
+    if df.shape[1] < 2:
+        st.error("❌ The file must have at least two columns: Temperature and Mobility.")
+        st.stop()
+except Exception as e:
+    st.error(f"❌ Failed to read file: {e}")
+    st.stop()
 
     st.subheader("Data Preview")
     st.dataframe(df)
