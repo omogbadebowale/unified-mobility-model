@@ -1,64 +1,74 @@
-from mobility_model import run_fit
-from material_presets import material_classes
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 from mobility_model import run_fit
-from utils import plot_fit, evaluate_fit_quality
+from material_presets import material_classes
 
-st.set_page_config(layout="wide", page_title="Grain-Boundary Mobility Model")
+st.set_page_config(page_title="Unified Mobility Model", layout="centered")
+st.title("📈 Unified Mobility Model Fitting for Polycrystalline Materials")
 
-st.title("Unified Mobility Model Fitting for Polycrystalline Materials")
+uploaded_file = st.file_uploader("Upload CSV or TXT file with two columns: Temperature, Mobility", type=["csv", "txt"])
 
-# Upload data
-uploaded_file = st.file_uploader("Upload your data file (CSV or Excel with Temperature and Mobility columns)", type=['csv', 'xlsx'])
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file, delim_whitespace=True)
+    df.columns = df.columns.str.strip()
 
-if uploaded_file:
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
-        st.write("Preview of Uploaded Data:")
-        st.dataframe(df.head())
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-        st.stop()
+    st.subheader("Data Preview")
+    st.dataframe(df)
 
-    if 'Temperature' not in df.columns or 'Mobility' not in df.columns:
-        st.error("File must contain 'Temperature' and 'Mobility' columns.")
-        st.stop()
+    T_data = df.iloc[:, 0].values
+    mu_data = df.iloc[:, 1].values
 
-    T_data = df['Temperature'].values
-    mu_data = df['Mobility'].values
+    material = st.sidebar.selectbox("Select Material", list(material_classes.keys()))
+    preset = material_classes[material]
 
-    st.sidebar.header("Model Parameters")
-    mu_w = st.sidebar.slider("Initial μw", 50, 1000, 300)
-    phi_GB = st.sidebar.slider("Initial ΦGB (eV)", 0.0, 0.5, 0.05)
-    l300 = st.sidebar.slider("Initial ℓ₃₀₀ (nm)", 1, 100, 20)
-    w_GB = st.sidebar.slider("Initial w_GB (nm)", 1, 50, 5)
-    p = st.sidebar.slider("Initial phonon exponent p", 1.0, 3.0, 1.5, 0.1)
+    if material != "Custom":
+        st.sidebar.markdown(f"**Class:** {preset['class']}")
+        pset = preset["params"]
+        fix_params = preset["fixed"]
 
-    fix_p = st.sidebar.checkbox("Fix p")
-    fix_params = []
-    if fix_p:
-        fix_params.append('p')
-
-    fallback = st.sidebar.checkbox("Use simplified thermionic model only")
+        mu_w = st.sidebar.slider("μw (cm²/V·s)", *pset["mu_w_bounds"], value=pset["mu_w_bounds"][0])
+        initial_params = {
+            "mu_w": mu_w,
+            "phi_GB": pset["phi_GB"],
+            "l300": pset["l300"],
+            "w_GB": pset["w_GB"],
+            "p": pset["p"]
+        }
+    else:
+        mu_w = st.sidebar.slider("μw", 100, 1000, 300)
+        phi_GB = st.sidebar.slider("ΦGB (eV)", 0.05, 0.3, 0.1)
+        l300 = st.sidebar.slider("ℓ₃₀₀ (nm)", 5, 100, 20)
+        w_GB = st.sidebar.slider("w_GB (nm)", 2, 30, 5)
+        p = st.sidebar.slider("Phonon exponent p", 1.0, 3.0, 1.5)
+        fix_params = []
+        if st.sidebar.checkbox("Fix p"):
+            fix_params.append("p")
+        initial_params = {
+            "mu_w": mu_w,
+            "phi_GB": phi_GB,
+            "l300": l300,
+            "w_GB": w_GB,
+            "p": p
+        }
 
     if st.button("Fit Model"):
-        result = run_fit(
-            T_data, mu_data,
-            initial_params={'mu_w': mu_w, 'phi_GB': phi_GB, 'l300': l300, 'w_GB': w_GB, 'p': p},
-            fix_params=fix_params,
-            fallback=fallback
-        )
+        result = run_fit(T_data, mu_data, initial_params, fix_params)
+
         st.subheader("Fitting Results")
         st.text(result.fit_report())
 
-        fig = plot_fit(T_data, mu_data, result)
+        fig, ax = plt.subplots()
+        ax.plot(T_data, mu_data, 'o', label='Data')
+        ax.plot(T_data, result.best_fit, '-', label='Fit')
+        ax.set_xlabel('Temperature (K)')
+        ax.set_ylabel('Mobility (cm²/V·s)')
+        ax.legend()
         st.pyplot(fig)
 
-        R2, RMSE = evaluate_fit_quality(mu_data, result.best_fit)
+        R2 = 1 - sum((mu_data - result.best_fit)**2) / sum((mu_data - mu_data.mean())**2)
+        RMSE = ((mu_data - result.best_fit)**2).mean()**0.5
         st.markdown(f"**R²** = {R2:.4f}, **RMSE** = {RMSE:.2f} cm²/V·s")
+
+        if result.redchi > 10 or any(p.stderr is None for p in result.params.values()):
+            st.warning("⚠️ Overfitting possible. Consider fixing or constraining more parameters.")
