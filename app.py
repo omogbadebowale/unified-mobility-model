@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 from mobility_model import run_fit
 from material_presets import material_classes
 
@@ -69,9 +70,11 @@ if uploaded_file is not None:
 
         fig, ax = plt.subplots()
         ax.plot(T_data, mu_data, 'o', label='Data')
-        T_fit = sorted(T_data)
+
+        T_fit = np.linspace(min(T_data), max(T_data), 200)
         mu_fit = result.model.eval(result.params, T=T_fit)
         ax.plot(T_fit, mu_fit, '-', label='Fit')
+
         ax.set_xlabel('Temperature (K)')
         ax.set_ylabel('Mobility (cm²/V·s)')
         ax.legend()
