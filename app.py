@@ -5,36 +5,28 @@ import pandas as pd
 from lmfit import Model
 import matplotlib.pyplot as plt
 
-# Set page config
 st.set_page_config(
     page_title="Grain-Boundary Mobility Model Fitting",
     page_icon="📈",
     layout="wide",
 )
 
-# Title and Description
 st.title("📊 Unified Mobility Model Fitting Tool")
 st.markdown("""
-This interactive tool fits the **Grain-Boundary-Limited Mobility Model** to your experimental data. 
+Upload a CSV file with columns:
+- `T` (Temperature in Kelvin)
+- `mu` (Mobility in cm²/V·s)
 
-Upload your **CSV file** with two columns:
-- `T` → Temperature (in Kelvin)
-- `mu` → Carrier mobility (in cm²/V·s)
-
-🔬 This model incorporates thermionic barrier, grain-boundary scattering, and phonon-limited transport.
+This tool fits a grain-boundary-limited mobility model to your data.
 """)
 
-# Sidebar Information
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Crystal_structure_ZnO.png/220px-Crystal_structure_ZnO.png", width=220)
-    st.header("Instructions")
-    st.markdown("""
-    - Upload your data as a CSV file.
-    - The fitting model will extract key physical parameters.
-    - Scroll down to view model fit, equations, and fit quality.
-    """)
+    st.header("Settings")
+    constrained = st.checkbox("Use Constrained Fitting (fix ℓ₃₀₀ & w_GB)", value=True)
+    l300_fixed = st.number_input("Fixed ℓ₃₀₀ (nm)", value=20.0, min_value=1.0) if constrained else None
+    wGB_fixed = st.number_input("Fixed w_GB (nm)", value=10.0, min_value=1.0) if constrained else None
 
-# File Upload
 uploaded_file = st.file_uploader("📂 Upload CSV File", type=["csv"])
 
 if uploaded_file is not None:
@@ -45,50 +37,47 @@ if uploaded_file is not None:
         else:
             T_data = data['T'].values
             mu_exp = data['mu'].values
-
-            # Sort data by T for smooth plotting
             sort_idx = np.argsort(T_data)
-            T_data = T_data[sort_idx]
-            mu_exp = mu_exp[sort_idx]
+            T_data, mu_exp = T_data[sort_idx], mu_exp[sort_idx]
 
-            # Constants
-            kB = 8.617333262145e-5  # eV/K
+            kB = 8.617333262145e-5
 
-            # Unified Mobility Model with fixed p = 1.5
             def mobility_model(T, mu_w, phi_GB, l300, w_GB):
                 p = 1.5
                 l_T = l300 * (T / 300)**(-p)
-                geom_factor = l_T / (l_T + w_GB)
-                thermionic_factor = np.exp(-phi_GB / (kB * T))
-                mu_eff = mu_w * thermionic_factor * geom_factor
-                return mu_eff
+                G = l_T / (l_T + w_GB)
+                P = np.exp(-phi_GB / (kB * T))
+                return mu_w * P * G
 
             model = Model(mobility_model)
-            params = model.make_params(mu_w=300, phi_GB=0.1, l300=20, w_GB=5)
+
+            if constrained:
+                params = model.make_params(mu_w=300, phi_GB=0.1)
+                params.add("l300", value=l300_fixed, vary=False)
+                params.add("w_GB", value=wGB_fixed, vary=False)
+            else:
+                params = model.make_params(mu_w=300, phi_GB=0.1, l300=20, w_GB=5)
+                params['l300'].set(min=1, max=100)
+                params['w_GB'].set(min=1, max=50)
+
             params['mu_w'].set(min=0, max=2000)
             params['phi_GB'].set(min=0, max=0.5)
-            params['l300'].set(min=1, max=100)
-            params['w_GB'].set(min=1, max=50)
 
-            # Fitting
             result = model.fit(mu_exp, params, T=T_data)
 
-            # Results
             st.subheader("📄 Fit Summary Report")
             st.text(result.fit_report())
 
-            # Plotting
             fig, ax = plt.subplots(figsize=(8, 5))
             ax.plot(T_data, mu_exp, 'bo', label='Experimental Data')
-            ax.plot(T_data, result.best_fit, 'r-', label='Fitted Model')
+            ax.plot(T_data, result.best_fit, 'r-', label='Model Fit')
             ax.set_xlabel('Temperature (K)')
             ax.set_ylabel('Mobility (cm²/V·s)')
-            ax.set_title('Grain-Boundary-Limited Mobility Fit')
+            ax.set_title('Unified Mobility Model Fit')
             ax.grid(True)
             ax.legend()
             st.pyplot(fig)
 
-            # Parameter Table
             st.subheader("📌 Fitted Parameters")
             fit_table = pd.DataFrame({
                 'Parameter': list(result.params.keys()),
@@ -97,21 +86,14 @@ if uploaded_file is not None:
             })
             st.dataframe(fit_table)
 
-            st.success("✅ Model fitting completed successfully.")
-
-            st.markdown("""
-            ### ⚠️ Interpretation Note:
-            - The scattering exponent `p` has been fixed to 1.5 to reflect acoustic phonon dominance.
-            - Strong correlations may occur between parameters; use known values (e.g., SEM grain size) when possible.
-            - For more robust fitting, increase data points or constrain parameters.
-            """)
+            st.success("✅ Fit completed with " + ("constrained" if constrained else "free") + " parameters.")
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
 
 st.markdown("---")
 st.markdown("""
-👨‍🔬 Developed by **Gbadebo Taofeek Yusuf et al.**  
-🔗 [Zenodo Dataset & Code](https://doi.org/10.5281/zenodo.15617024)  
-📚 Referenced in: *Unified Mobility Model for Grain-Boundary-Limited Transport in Polycrystalline Materials*
+Developed by **Gbadebo Taofeek Yusuf et al.**  
+🔗 [Zenodo Dataset](https://doi.org/10.5281/zenodo.15617024)  
+📚 *Unified Mobility Model for Grain-Boundary-Limited Transport in Polycrystalline Materials*
 """)
