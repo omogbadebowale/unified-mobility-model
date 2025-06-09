@@ -1,3 +1,4 @@
+from mobility_model import run_fit
 from material_presets import material_classes
 import streamlit as st
 import pandas as pd
