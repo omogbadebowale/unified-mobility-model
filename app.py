@@ -7,25 +7,26 @@ from material_presets import material_classes
 st.set_page_config(page_title="Unified Mobility Model", layout="centered")
 st.title("📈 Unified Mobility Model Fitting for Polycrystalline Materials")
 
-uploaded_file = st.file_uploader("Upload CSV or TXT file with two columns: Temperature, Mobility", type=["csv", "txt"])
+uploaded_file = st.file_uploader("Upload your CSV file (Temperature,Mobility)", type=["csv"])
 
 if uploaded_file is not None:
     try:
-    df = pd.read_csv(uploaded_file, sep=None, engine='python')
-    df.columns = df.columns.str.strip()
+        df = pd.read_csv(uploaded_file, sep=",")
+        df.columns = df.columns.str.strip()
 
-    if df.shape[1] < 2:
-        st.error("❌ The file must have at least two columns: Temperature and Mobility.")
+        if df.shape[1] < 2:
+            st.error("❌ File must have two columns: Temperature and Mobility.")
+            st.stop()
+
+        T_data = df.iloc[:, 0].values
+        mu_data = df.iloc[:, 1].values
+
+        st.subheader("Data Preview")
+        st.dataframe(df)
+
+    except Exception as e:
+        st.error(f"❌ Failed to read file: {e}")
         st.stop()
-except Exception as e:
-    st.error(f"❌ Failed to read file: {e}")
-    st.stop()
-
-    st.subheader("Data Preview")
-    st.dataframe(df)
-
-    T_data = df.iloc[:, 0].values
-    mu_data = df.iloc[:, 1].values
 
     material = st.sidebar.selectbox("Select Material", list(material_classes.keys()))
     preset = material_classes[material]
@@ -68,7 +69,9 @@ except Exception as e:
 
         fig, ax = plt.subplots()
         ax.plot(T_data, mu_data, 'o', label='Data')
-        ax.plot(T_data, result.best_fit, '-', label='Fit')
+        T_fit = sorted(T_data)
+        mu_fit = result.model.eval(result.params, T=T_fit)
+        ax.plot(T_fit, mu_fit, '-', label='Fit')
         ax.set_xlabel('Temperature (K)')
         ax.set_ylabel('Mobility (cm²/V·s)')
         ax.legend()
@@ -79,4 +82,4 @@ except Exception as e:
         st.markdown(f"**R²** = {R2:.4f}, **RMSE** = {RMSE:.2f} cm²/V·s")
 
         if result.redchi > 10 or any(p.stderr is None for p in result.params.values()):
-            st.warning("⚠️ Overfitting possible. Consider fixing or constraining more parameters.")
+            st.warning("⚠️ Overfitting possible. Try fixing or constraining more parameters.")
