@@ -1,5 +1,3 @@
-# material_presets.py
-
 material_classes = {
     "ZnO": {
         "class": "B: Moderate GB-Limited Semiconductor",
