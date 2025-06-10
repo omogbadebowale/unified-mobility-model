@@ -1,6 +1,6 @@
 streamlit
+lmfit
 pandas
 numpy
 matplotlib
-lmfit
-openpyxl
+
