@@ -1,0 +1,48 @@
+
+import itertools
+from lmfit import Model, Parameters
+import numpy as np
+
+def mobility_model(T, mu_w, phi_GB, l300, w_GB, p):
+    k_B = 8.617333262e-5
+    l_T = l300 * (T / 300.0) ** (-p)
+    geom = l_T / (l_T + w_GB)
+    thermo = np.exp(-phi_GB / (k_B * T))
+    return mu_w * thermo * geom
+
+def scan_parameter_combinations(T, mu, initial, fixed_keys):
+    model = Model(mobility_model)
+    all_keys = ["mu_w", "phi_GB", "l300", "w_GB"]
+    scan_results = []
+
+    for free_combo in itertools.combinations(all_keys, r=1):
+        for extra_free in itertools.combinations(set(all_keys) - set(free_combo), r=1):
+            free_set = set(free_combo + extra_free)
+            params = Parameters()
+            for key in all_keys:
+                value = initial[key]
+                if key in free_set:
+                    if key == "mu_w":
+                        params.add(key, value=value, min=10, max=1000)
+                    elif key == "phi_GB":
+                        params.add(key, value=value, min=0.0005, max=0.3)
+                    elif key == "l300":
+                        params.add(key, value=value, min=1, max=100)
+                    elif key == "w_GB":
+                        params.add(key, value=value, min=1, max=100)
+                else:
+                    params.add(key, value=value, vary=False)
+            params.add("p", value=initial["p"], vary=False)
+
+            result = model.fit(mu, params, T=T)
+            summary = {
+                "free_params": list(free_set),
+                "red_chisq": result.redchi,
+                "aic": result.aic,
+                "r_squared": result.rsquared,
+                "fit_report": result.fit_report()
+            }
+            scan_results.append(summary)
+
+    scan_results.sort(key=lambda x: (x["red_chisq"], -x["r_squared"]))
+    return scan_results
