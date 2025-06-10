@@ -33,30 +33,23 @@ materials = {
     "Custom": {"mu_w": 300, "phi_GB": 0.1, "l300": 20, "w_GB": 5, "p": 1.5}
 }
 material = st.selectbox("Material Type", list(materials))
+defaults = materials[material]
 
-# --- GUIDED FIT MODE ---
+# Guided Fit Mode
 guided = st.checkbox("🧪 Enable Guided Fit Mode (Recommended)", value=True)
-
 if guided:
     st.markdown("✔️ Guided mode is using a preset configuration based on material type.")
-
-    # Define guided presets per material
     guided_presets = {
         "Oxide (ZnO, SrTiO₃)": {"float": ["mu_w", "phi_GB"], "fix": ["l300", "w_GB", "p"]},
         "Chalcogenide (Bi₂Te₃, SnSe)": {"float": ["mu_w", "phi_GB"], "fix": ["l300", "w_GB", "p"]},
         "Intermetallic (Mg₂Si, PbTe)": {"float": ["mu_w", "phi_GB"], "fix": ["l300", "w_GB", "p"]},
         "Custom": {"float": ["mu_w", "phi_GB", "l300"], "fix": ["w_GB", "p"]}
     }
-
     current = guided_presets[material]
     float_set = set(current["float"])
-    fix_set = set(current["fix"])
 else:
     st.markdown("⚠️ You are in advanced mode. Adjust parameters manually.")
     float_set = set()
-    fix_set = set()
-
-defaults = materials[material]
 
 mu_w = st.sidebar.number_input("μw (cm²/V·s)", value=defaults["mu_w"])
 phi_GB = st.sidebar.number_input("ΦGB (eV)", value=defaults["phi_GB"])
@@ -106,3 +99,20 @@ if uploaded:
 
         st.subheader("Fit Report")
         st.text(result.fit_report())
+
+        # Fit Quality Summary
+        def display_fit_quality(result):
+            st.subheader("🧾 Fit Quality Summary")
+            st.write(f"**R²:** {result.rsquared:.3f}")
+            st.write(f"**Reduced χ²:** {result.redchi:.2f}")
+            warning_lines = []
+            for name, param in result.params.items():
+                if param.stderr is not None and param.value != 0:
+                    pct_uncertainty = abs(param.stderr / param.value) * 100
+                    if pct_uncertainty > 100:
+                        warning_lines.append(f"⚠️ `{name}` uncertainty > 100% ({pct_uncertainty:.1f}%)")
+            if warning_lines:
+                st.error("Unstable Parameters Detected:\n" + "\n".join(warning_lines))
+            else:
+                st.success("All parameter uncertainties < 100% ✅")
+        display_fit_quality(result)
