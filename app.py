@@ -13,7 +13,7 @@ uploaded_file = st.sidebar.file_uploader(
     "Upload CSV with columns 'T' (K) and 'mu' (cm²/Vs)",
     type="csv"
 )
-if uploaded_file is None:
+if not uploaded_file:
     st.warning("Please upload a mobility CSV file to proceed.")
     st.stop()
 
@@ -21,113 +21,76 @@ data = pd.read_csv(uploaded_file)
 T = data['T'].values
 mu = data['mu'].values
 
-# 2. Sidebar: parameter fixing
-st.sidebar.header("Parameter Anchors")
-fix_mu_w = st.sidebar.checkbox("Fix μ_w", value=False)
-if fix_mu_w:
-    mu_w_val = st.sidebar.number_input("Fixed μ_w (cm²/Vs)", value=200.0, min_value=0.0)
+# 2. Auto-estimate μ_w from the high-T plateau
+#    Use the top 5 temperatures to find the plateau average
+order = np.argsort(T)
+mu_sorted = mu[order]
+mu_w_est = float(np.mean(mu_sorted[-5:]))
 
-fix_l300 = st.sidebar.checkbox("Fix ℓ₃₀₀", value=False)
-if fix_l300:
-    l300_val_nm = st.sidebar.number_input("Fixed ℓ₃₀₀ (nm)", value=30.0, min_value=0.1)
-    l300_val = l300_val_nm * 1e-9
-
-fix_phi = st.sidebar.checkbox("Fix Φ_GB", value=False)
-if fix_phi:
-    phi_val = st.sidebar.number_input("Fixed Φ_GB (eV)", value=0.12, min_value=0.0)
-
-fix_p = st.sidebar.checkbox("Fix p", value=False)
-if fix_p:
-    p_val = st.sidebar.number_input("Fixed p", value=2.0, min_value=0.0)
-
-fix_wgb = st.sidebar.checkbox("Fix w_GB", value=False)
-if fix_wgb:
-    w_val_nm = st.sidebar.number_input("Fixed w_GB (nm)", value=2.0, min_value=0.1)
-    w_val = w_val_nm * 1e-9
-
-# 3. Sidebar: bounds for free parameters (with relaxed minima)
-st.sidebar.header("Bounds for Free Parameters")
+# 3. Sidebar: bounds for each parameter
+st.sidebar.header("Fit Bounds (all parameters free)")
 def get_bounds(label, default_min, default_max, factor=1.0):
-    lo_user = st.sidebar.number_input(f"{label} min", value=default_min)
-    hi_user = st.sidebar.number_input(f"{label} max", value=default_max)
-    return lo_user * factor, hi_user * factor
+    lo = st.sidebar.number_input(f"{label} min", value=default_min)
+    hi = st.sidebar.number_input(f"{label} max", value=default_max)
+    return lo * factor, hi * factor
 
 bounds = {}
-if not fix_mu_w:
-    bounds['mu_w'] = get_bounds("μ_w (cm²/Vs)", 50, 2000)
-if not fix_phi:
-    bounds['phi'] = get_bounds("Φ_GB (eV)", 0.0, 0.5)
-if not fix_l300:
-    # loosen the min to 1 nm instead of 5 nm
-    bounds['l300'] = get_bounds("ℓ₃₀₀ (nm)", 1, 100, factor=1e-9)
-if not fix_p:
-    bounds['p'] = get_bounds("p", 1.0, 3.0)
-if not fix_wgb:
-    # loosen the min to 0.1 nm instead of 0.5 nm
-    bounds['w'] = get_bounds("w_GB (nm)", 0.1, 10.0, factor=1e-9)
+# μ_w ±20%
+bounds['mu_w'] = get_bounds(
+    "μ_w (cm²/Vs)",
+    mu_w_est * 0.8,
+    mu_w_est * 1.2
+)
+# Φ_GB in [0,0.5] eV
+bounds['phi'] = get_bounds("Φ_GB (eV)", 0.0, 0.5)
+# ℓ₃₀₀ in [1,100] nm → meters
+bounds['l300'] = get_bounds("ℓ₃₀₀ (nm)", 1, 100, factor=1e-9)
+# p in [1,3]
+bounds['p'] = get_bounds("p", 1.0, 3.0)
+# w_GB in [0.1,10] nm → meters
+bounds['w'] = get_bounds("w_GB (nm)", 0.1, 10.0, factor=1e-9)
 
-# 4. Build unified mobility model dynamically
+# 4. Build unified mobility model
 k_B = 8.617333262e-5  # eV/K
-def unified_model(T, *params):
-    idx = 0
-    mu_w = mu_w_val if fix_mu_w else params[idx]; idx += not fix_mu_w
-    phi  = phi_val  if fix_phi  else params[idx]; idx += not fix_phi
-    l300 = l300_val if fix_l300 else params[idx]; idx += not fix_l300
-    p    = p_val    if fix_p    else params[idx]; idx += not fix_p
-    wgb  = w_val    if fix_wgb  else params[idx]
-    l_T = l300 * (T/300)**(-p)
+def unified_model(T, mu_w, phi, l300, p, w):
+    l_T = l300 * (T / 300.0)**(-p)
     P_GB = np.exp(-phi / (k_B * T))
-    G = l_T / (l_T + wgb)
+    G = l_T / (l_T + w)
     return mu_w * P_GB * G
 
-# 5. Prepare initial guess and bounds arrays
-p0, lower, upper = [], [], []
-for key, (lo, hi) in bounds.items():
-    p0.append((lo + hi) / 2)
-    lower.append(lo)
-    upper.append(hi)
+# 5. Prepare initial guesses and bounds arrays
+p0   = [(lo + hi)/2 for lo, hi in bounds.values()]
+lower, upper = zip(*bounds.values())
 
-# 6. Fit model
+# 6. Fit
 try:
     popt, pcov = curve_fit(
-        unified_model, T, mu, p0=p0, bounds=(lower, upper)
+        unified_model, T, mu,
+        p0=p0, bounds=(lower, upper)
     )
     perr = np.sqrt(np.diag(pcov))
 except Exception as e:
     st.error(f"Fit failed: {e}")
     st.stop()
 
-# 7. Display results
-param_defs = [
-    ("μ_w (cm²/Vs)", "mu_w", fix_mu_w,  mu_w_val   if fix_mu_w  else None),
-    ("Φ_GB (eV)",      "phi",   fix_phi,  phi_val    if fix_phi   else None),
-    ("ℓ₃₀₀ (m)",       "l300",  fix_l300, l300_val   if fix_l300  else None),
-    ("p",              "p",     fix_p,    p_val      if fix_p     else None),
-    ("w_GB (m)",       "w",     fix_wgb,  w_val      if fix_wgb   else None),
-]
-free_keys = list(bounds.keys())
+# 7. Display fitted parameters
+param_names = ['μ_w (cm²/Vs)', 'Φ_GB (eV)', 'ℓ₃₀₀ (m)', 'p', 'w_GB (m)']
+results = pd.DataFrame({
+    'Estimate': popt,
+    'Uncertainty': perr
+}, index=param_names)
 
-rows = []
-for name, key, is_fixed, fixed_val in param_defs:
-    if is_fixed:
-        rows.append((name, fixed_val, 0.0))
-    else:
-        idx = free_keys.index(key)
-        rows.append((name, popt[idx], perr[idx]))
-
-results_df = pd.DataFrame(rows, columns=["Parameter","Estimate","Uncertainty"])\
-                   .set_index("Parameter")
 st.subheader("Fitted Parameters")
-st.table(results_df)
+st.table(results)
 
-# correlation only for free parameters
-if len(free_keys) > 1:
-    corr = pcov / np.outer(perr, perr)
-    corr_df = pd.DataFrame(corr, index=free_keys, columns=free_keys)
-    st.subheader("Parameter Correlation Matrix")
-    st.table(corr_df)
+# 8. Correlation matrix
+corr = pcov / np.outer(perr, perr)
+corr_df = pd.DataFrame(corr, index=param_names, columns=param_names)
 
-# 8. Plot fit
+st.subheader("Parameter Correlation Matrix")
+st.table(corr_df)
+
+# 9. Plot data + fit
 fig, ax = plt.subplots()
 ax.scatter(T, mu, color='black', label='Data')
 T_fit = np.linspace(T.min(), T.max(), 400)
