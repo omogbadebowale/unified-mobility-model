@@ -1,18 +1,8 @@
-# Required versions
 streamlit==1.35.0
 
-# Scientific computing
 numpy==1.26.4
 scipy==1.11.4
-pandas==2.2.2
-matplotlib==3.8.4
-lmfit==1.2.2
 
-# Materials + ML
 pymatgen==2023.5.10
 matgl==0.8.3
 torch==2.2.2
-
-# Optional viewers/tools
-stmol==0.1.2
-rdkit-pypi==2024.3.1
