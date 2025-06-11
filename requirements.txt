@@ -1,20 +1,18 @@
-streamlit
-lmfit
-pandas
-numpy
-matplotlib
+# Required versions
 streamlit==1.35.0
 
-# Scientific stack
+# Scientific computing
 numpy==1.26.4
 scipy==1.11.4
+pandas==2.2.2
+matplotlib==3.8.4
+lmfit==1.2.2
 
-# ML and Materials
+# Materials + ML
 pymatgen==2023.5.10
 matgl==0.8.3
 torch==2.2.2
 
-# Optional UI and chemistry tools
+# Optional viewers/tools
 stmol==0.1.2
 rdkit-pypi==2024.3.1
-
