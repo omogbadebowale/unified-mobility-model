@@ -45,7 +45,7 @@ if fix_wgb:
     w_val_nm = st.sidebar.number_input("Fixed w_GB (nm)", value=2.0, min_value=0.1)
     w_val = w_val_nm * 1e-9
 
-# 3. Sidebar: bounds for free parameters (corrected)
+# 3. Sidebar: bounds for free parameters (with relaxed minima)
 st.sidebar.header("Bounds for Free Parameters")
 def get_bounds(label, default_min, default_max, factor=1.0):
     lo_user = st.sidebar.number_input(f"{label} min", value=default_min)
@@ -58,11 +58,13 @@ if not fix_mu_w:
 if not fix_phi:
     bounds['phi'] = get_bounds("Φ_GB (eV)", 0.0, 0.5)
 if not fix_l300:
-    bounds['l300'] = get_bounds("ℓ₃₀₀ (nm)", 5, 100, factor=1e-9)
+    # loosen the min to 1 nm instead of 5 nm
+    bounds['l300'] = get_bounds("ℓ₃₀₀ (nm)", 1, 100, factor=1e-9)
 if not fix_p:
     bounds['p'] = get_bounds("p", 1.0, 3.0)
 if not fix_wgb:
-    bounds['w'] = get_bounds("w_GB (nm)", 0.5, 10.0, factor=1e-9)
+    # loosen the min to 0.1 nm instead of 0.5 nm
+    bounds['w'] = get_bounds("w_GB (nm)", 0.1, 10.0, factor=1e-9)
 
 # 4. Build unified mobility model dynamically
 k_B = 8.617333262e-5  # eV/K
