@@ -10,7 +10,8 @@ st.title("Unified Mobility Model for Polycrystalline Materials")
 
 # 1. Upload data
 uploaded_file = st.sidebar.file_uploader(
-    "Upload CSV with columns 'T' (K) and 'mu' (cm²/Vs)", type="csv"
+    "Upload CSV with columns 'T' (K) and 'mu' (cm²/Vs)",
+    type="csv"
 )
 if uploaded_file is None:
     st.warning("Please upload a mobility CSV file to proceed.")
@@ -95,33 +96,34 @@ except Exception as e:
     st.stop()
 
 # 7. Display results
-param_names = [
-    ("μ_w (cm²/Vs)", "mu_w"),
-    ("Φ_GB (eV)",      "phi"),
-    ("ℓ₃₀₀ (m)",       "l300"),
-    ("p",              "p"),
-    ("w_GB (m)",       "w")
+param_defs = [
+    ("μ_w (cm²/Vs)", "mu_w", fix_mu_w,  mu_w_val   if fix_mu_w  else None),
+    ("Φ_GB (eV)",      "phi",   fix_phi,  phi_val    if fix_phi   else None),
+    ("ℓ₃₀₀ (m)",       "l300",  fix_l300, l300_val   if fix_l300  else None),
+    ("p",              "p",     fix_p,    p_val      if fix_p     else None),
+    ("w_GB (m)",       "w",     fix_wgb,  w_val      if fix_wgb   else None),
 ]
+free_keys = list(bounds.keys())
 
 rows = []
-for name, key in param_names:
-    if key in bounds:
-        idx = list(bounds.keys()).index(key)
-        est, err = popt[idx], perr[idx]
+for name, key, is_fixed, fixed_val in param_defs:
+    if is_fixed:
+        rows.append((name, fixed_val, 0.0))
     else:
-        est = {"mu_w":mu_w_val,"phi":phi_val,
-               "l300":l300_val,"p":p_val,"w":w_val}[key]
-        err = 0.0
-    rows.append((name, est, err))
+        idx = free_keys.index(key)
+        rows.append((name, popt[idx], perr[idx]))
 
-results_df = pd.DataFrame(rows, columns=["Parameter","Estimate","Uncertainty"]).set_index("Parameter")
+results_df = pd.DataFrame(rows, columns=["Parameter","Estimate","Uncertainty"])\
+                   .set_index("Parameter")
 st.subheader("Fitted Parameters")
 st.table(results_df)
 
-st.subheader("Parameter Correlation Matrix")
-corr_mat = pcov / np.outer(perr, perr)
-corr_df = pd.DataFrame(corr_mat, index=bounds.keys(), columns=bounds.keys())
-st.table(corr_df)
+# correlation only for free parameters
+if len(free_keys) > 1:
+    corr = pcov / np.outer(perr, perr)
+    corr_df = pd.DataFrame(corr, index=free_keys, columns=free_keys)
+    st.subheader("Parameter Correlation Matrix")
+    st.table(corr_df)
 
 # 8. Plot fit
 fig, ax = plt.subplots()
