@@ -1,64 +1,12 @@
-"""
-Surrogate‑DFT Molecular Designer
-================================
-
-A Streamlit web app that lets you sketch or upload a molecular/crystal
-structure and get *instant* surrogate‑DFT predictions (formation energy,
-band gap, ΔE<sub>hull</sub>) from a pre‑trained **M3GNet** graph‑neural
-network.
-
---------------------------------------------------------------------------
-Deployment quick‑start (Streamlit Community Cloud)
---------------------------------------------------------------------------
-1. **Repo layout**
-   ```text
-   your‑repo/
-   ├── app.py               # this file
-   ├── requirements.txt     # Python deps (see below)
-   ├── packages.txt         # OPTIONAL system libs (e.g. libopenblas‑dev)
-   └── README.md
-   ```
-
-2. **requirements.txt** – pin proven versions to avoid wheel clashes
-   ```text
-   streamlit==1.35.0
-   # core libs
-   numpy==1.26.4
-   scipy==1.11.4
-   # domain + ML
-   pymatgen==2023.5.10
-   matgl==0.8.3
-   torch==2.2.2
-   # viewers / helpers (optional but nice)
-   stmol==0.1.2
-   rdkit-pypi==2024.3.1
-   ```
-   Wheels exist for all of the above, so no compiler toolchain is required.
-   If `matgl` complains about missing BLAS/LAPACK, add this to **packages.txt**:
-   ```text
-   libopenblas-dev
-   ```
-
-3. **Deploy** → <https://streamlit.io/cloud> → *New app* → pick repo/branch →
-   main file `app.py` → **Deploy**. First build grabs the 60 MB M3GNet model.
-
-----------------------------------------------------------------------
-❗ Troubleshooting
-----------------------------------------------------------------------
-* **stmol fails** → viewer disabled but app still works.
-* **pymatgen fails** → check logs, ensure pinned version above. Import errors
-  are now caught and surfaced in‑app for easier debugging.
-* **Memory limit** → Settings → Hardware → “Medium” (free 3 GB).
-
---------------------------------------------------------------------------
-"""
-
 from __future__ import annotations
 
 import os
 from typing import Any, Dict, Union
 
 import streamlit as st
+
+# ── MUST be first Streamlit command ───────────────────────────────────────
+st.set_page_config(page_title="Surrogate‑DFT Molecular Designer", layout="wide")
 
 # ── Optional 3‑D viewer (stmol) ───────────────────────────────────────────
 try:
@@ -70,7 +18,7 @@ except Exception:
 # ── Core chemistry libs (pymatgen) ────────────────────────────────────────
 try:
     from pymatgen.core import Molecule, Structure
-except Exception as pmg_err:  # noqa: BLE001  (broad import OK here)
+except Exception as pmg_err:  # noqa: BLE001
     Molecule = None  # type: ignore
     Structure = None  # type: ignore
     st.error(
@@ -92,9 +40,7 @@ except Exception as model_err:  # noqa: BLE001
     model = None  # type: ignore
     st.error("❌ Surrogate model failed to load – predictions disabled.\n\n" f"{model_err}")
 
-# ── Page config ───────────────────────────────────────────────────────────
-st.set_page_config(page_title="Surrogate‑DFT Molecular Designer", layout="wide")
-
+# ── Page layout and title ─────────────────────────────────────────────────
 st.title("⚛️ Surrogate‑DFT Molecular Designer")
 
 st.markdown(
