@@ -11,21 +11,17 @@ st.set_page_config(page_title="Surrogate‑DFT Molecular Designer", layout="wide
 # ── Optional 3‑D viewer (stmol) ───────────────────────────────────────────
 try:
     from stmol import mol_view
-except Exception:
-    st.warning("ℹ️ `stmol` unavailable – 3‑D viewer disabled.")
+except Exception as e:
+    st.warning(f"ℹ️ `stmol` unavailable – 3‑D viewer disabled.\n\n{e}")
     mol_view = None  # type: ignore
 
 # ── Core chemistry libs (pymatgen) ────────────────────────────────────────
 try:
     from pymatgen.core import Molecule, Structure
-except Exception as pmg_err:  # noqa: BLE001
+except Exception as e:
     Molecule = None  # type: ignore
     Structure = None  # type: ignore
-    st.error(
-        "❌ `pymatgen` failed to import. Check that it’s listed in `requirements.txt` "
-        "and that the wheel installed correctly.\n\nLog excerpt: "
-        f"{pmg_err}"
-    )
+    st.error(f"❌ `pymatgen` failed to import.\n\n{e}")
 
 # ── ML surrogate (matgl / M3GNet) ─────────────────────────────────────────
 try:
@@ -36,11 +32,11 @@ try:
         return load_model("M3GNet_universal")
 
     model = get_model()
-except Exception as model_err:  # noqa: BLE001
+except Exception as e:
     model = None  # type: ignore
-    st.error("❌ Surrogate model failed to load – predictions disabled.\n\n" f"{model_err}")
+    st.error(f"❌ Surrogate model failed to load – predictions disabled.\n\n{e}")
 
-# ── Page layout and title ─────────────────────────────────────────────────
+# ── Page layout and instructions ──────────────────────────────────────────
 st.title("⚛️ Surrogate‑DFT Molecular Designer")
 
 st.markdown(
@@ -65,8 +61,6 @@ with col_in:
     uploaded_cif = st.file_uploader(
         "or upload CIF / POSCAR", type=["cif", "poscar", "vasp", "txt"]
     )
-
-    # TODO: integrate streamlit‑ketcher for 2‑D drag‑and‑drop editing
 
 with col_view:
     st.header("2  3‑D visualisation")
