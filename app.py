@@ -45,12 +45,12 @@ if fix_wgb:
     w_val_nm = st.sidebar.number_input("Fixed w_GB (nm)", value=2.0, min_value=0.1)
     w_val = w_val_nm * 1e-9
 
-# 3. Sidebar: bounds for free parameters
+# 3. Sidebar: bounds for free parameters (corrected)
 st.sidebar.header("Bounds for Free Parameters")
 def get_bounds(label, default_min, default_max, factor=1.0):
-    lo = st.sidebar.number_input(f"{label} min", value=default_min * factor)
-    hi = st.sidebar.number_input(f"{label} max", value=default_max * factor)
-    return lo / factor, hi / factor
+    lo_user = st.sidebar.number_input(f"{label} min", value=default_min)
+    hi_user = st.sidebar.number_input(f"{label} max", value=default_max)
+    return lo_user * factor, hi_user * factor
 
 bounds = {}
 if not fix_mu_w:
