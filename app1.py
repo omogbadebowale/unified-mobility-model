@@ -1,7 +1,55 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-from mobility_model import fit_mobility, fit_power_law
+from scipy.optimize import curve_fit
+
+kB = 8.617333262145e-5  # Boltzmann constant in eV/K
+
+def mu_eff_model(T, mu_w, phi_GB, w_GB, l_300, p):
+    l_T = l_300 * (T / 300) ** (-p)
+    G_T = l_T / (l_T + w_GB)
+    P_GB = np.exp(-phi_GB / (kB * T))
+    return mu_w * P_GB * G_T
+
+def fit_mobility(T, mu, fix_w_GB=None):
+    T = np.array(T)
+    mu = np.array(mu)
+    init_guess = [250, 0.08, 10, 40, 1.8]
+    bounds = ([0, 0, 0.1, 1, 0.1], [1e4, 1, 100, 1e3, 5])
+
+    if fix_w_GB is not None:
+        def model_fixed(T, mu_w, phi_GB, l_300, p):
+            return mu_eff_model(T, mu_w, phi_GB, fix_w_GB, l_300, p)
+        popt, pcov = curve_fit(model_fixed, T, mu, p0=init_guess[:1]+init_guess[1:2]+init_guess[3:], bounds=(bounds[0][:1]+bounds[0][1:2]+bounds[0][3:], bounds[1][:1]+bounds[1][1:2]+bounds[1][3:]), maxfev=10000)
+        perr = np.sqrt(np.diag(pcov))
+        return {
+            "mu_w": (popt[0], perr[0]),
+            "phi_GB": (popt[1], perr[1]),
+            "w_GB (nm)": fix_w_GB,
+            "l_300": (popt[2], perr[2]),
+            "p": (popt[3], perr[3])
+        }
+    else:
+        popt, pcov = curve_fit(mu_eff_model, T, mu, p0=init_guess, bounds=bounds, maxfev=10000)
+        perr = np.sqrt(np.diag(pcov))
+        return {
+            "mu_w": (popt[0], perr[0]),
+            "phi_GB": (popt[1], perr[1]),
+            "w_GB (nm)": (popt[2], perr[2]),
+            "l_300": (popt[3], perr[3]),
+            "p": (popt[4], perr[4])
+        }
+
+def fit_power_law(T, mu):
+    def model(T, A, n):
+        return A * T ** (-n)
+    popt, pcov = curve_fit(model, T, mu, p0=[1e5, 1.5], maxfev=10000)
+    perr = np.sqrt(np.diag(pcov))
+    return {
+        "A": (popt[0], perr[0]),
+        "n": (popt[1], perr[1])
+    }
 
 st.set_page_config(page_title="Mobility Model Fitting", layout="wide")
 st.title("📊 Grain Boundary & Power Law Mobility Fitting")
@@ -50,13 +98,13 @@ if uploaded_file:
 
             # Plot results
             st.subheader("📉 Fit Visualization")
-            T_fit = pd.Series(range(int(min(T)), int(max(T)) + 1))
+            T_fit = pd.Series(np.linspace(min(T), max(T), 300))
             if model_type == "Grain Boundary Model":
-                from mobility_model import kB
                 if isinstance(results["w_GB (nm)"], tuple):
                     mu_w, phi, w_GB, l_300, p = [results[k][0] for k in results]
-                else:
-                    mu_w, phi, w_GB, l_300, p = [results[k] for k in results]
+                elif isinstance(results["w_GB (nm)"], (float, int)):
+                    mu_w, phi, l_300, p = [results[k][0] for k in results if isinstance(results[k], tuple)]
+                    w_GB = results["w_GB (nm)"]
                 l_T = l_300 * (T_fit / 300) ** (-p)
                 G_T = l_T / (l_T + w_GB)
                 P_GB = np.exp(-phi / (kB * T_fit))
