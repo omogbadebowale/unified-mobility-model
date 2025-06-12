@@ -1,13 +1,3 @@
-# Core
-streamlit==1.35.0
-numpy==1.26.4
-scipy==1.11.4
-
-# Critical for materials ML
-pymatgen==2023.5.10
-matgl==0.8.3
-torch==2.2.2
-
-# (Optional, comment out if still failing)
-# stmol==0.1.2
-# rdkit-pypi==2024.3.1
+streamlit
+rdkit-pypi
+stmol
