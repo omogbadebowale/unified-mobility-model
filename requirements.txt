@@ -1,3 +1,6 @@
 streamlit
 rdkit-pypi
+pymatgen
 stmol
+matgl
+py3Dmol
