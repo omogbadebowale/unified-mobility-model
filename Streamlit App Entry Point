@@ -1,0 +1,36 @@
+import streamlit as st
+
+# Optional 3D viewer tool
+try:
+    from stmol import mol_view
+    mol_view_available = True
+except ImportError:
+    mol_view_available = False
+
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+st.set_page_config(page_title="Surrogate‑DFT Lab Assistant", layout="wide")
+
+st.title("🔬 Surrogate‑DFT Lab Assistant")
+st.markdown("**Step 1: Enter a SMILES string** to generate a 3D molecular structure.")
+
+# Input
+smiles = st.text_input("Enter SMILES string:", placeholder="e.g. C1=CC=CC=C1 (benzene)")
+
+if smiles:
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        mol = Chem.AddHs(mol)  # Add hydrogen atoms
+        AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+        AllChem.UFFOptimizeMolecule(mol)
+        st.success("3D structure generated!")
+
+        if mol_view_available:
+            mol_view(mol, height=400, width=400)
+        else:
+            st.warning("3D viewer (stmol) not installed. Please add it to requirements.txt")
+    except Exception as e:
+        st.error(f"Error generating structure: {e}")
+else:
+    st.info("Awaiting SMILES input...")
