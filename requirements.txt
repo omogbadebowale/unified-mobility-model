@@ -4,3 +4,7 @@ pymatgen
 stmol
 matgl
 py3Dmol
+fastapi
+uvicorn
+pdfkit
+reportlab
