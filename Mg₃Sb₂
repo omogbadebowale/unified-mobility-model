@@ -1,0 +1,49 @@
+# Import necessary libraries
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+
+# Updated temperature-dependent mobility data for Mg₃Sb₂
+temperature_updated = np.array([300, 350, 400, 450, 500, 550, 600, 650, 700])  # Temperatures in K
+mobility_updated = np.array([160, 150, 140, 125, 110, 90, 80, 70, 60])  # Corresponding mobility values in cm^2/V·s
+
+# Define the refined model based on the provided equation
+def mobility_model_refined(T, mu_w, phi_GB, l0, w_GB, p):
+    k_B = 8.617333262145e-5  # Boltzmann constant in eV/K
+    # Mean free path as a function of temperature
+    l_T = l0 * T ** (-p)
+    # The full model expression
+    return mu_w * np.exp(-phi_GB / (k_B * T)) * (l_T / (l_T + w_GB))
+
+# Initial guesses for the parameters (mu_w, phi_GB, l0, w_GB, p)
+mu_w_guess = 150  # Weighted mobility (cm^2/V·s)
+phi_GB_guess = 0.05  # Grain boundary barrier height (eV)
+l0_guess = 20  # Mean free path at 300 K (nm)
+w_GB_guess = 10  # Grain boundary width (nm)
+p_guess = 1.5  # Temperature exponent for mean free path
+
+# Fit the model to the updated experimental data
+params_updated, covariance_updated = curve_fit(
+    mobility_model_refined,
+    temperature_updated,
+    mobility_updated,
+    p0=[mu_w_guess, phi_GB_guess, l0_guess, w_GB_guess, p_guess],
+    maxfev=10000
+)
+
+# Extract the fitted parameters
+mu_w_fit_updated, phi_GB_fit_updated, l0_fit_updated, w_GB_fit_updated, p_fit_updated = params_updated
+
+# Calculate the fitted mobility using the refined model
+mobility_fitted_updated = mobility_model_refined(temperature_updated, *params_updated)
+
+# Plot the updated experimental data and the fitted model
+plt.figure(figsize=(8, 6))
+plt.plot(temperature_updated, mobility_updated, 'o', label='Mg₃Sb₂ Experimental Data', color='blue')
+plt.plot(temperature_updated, mobility_fitted_updated, '-', label='Fitted Model', color='red')
+plt.xlabel('Temperature (K)')
+plt.ylabel('Mobility (cm²/V·s)')
+plt.legend()
+plt.title('Mg₃Sb₂: Mobility vs Temperature (Updated Data)')
+plt.grid(True)
+plt.show()
