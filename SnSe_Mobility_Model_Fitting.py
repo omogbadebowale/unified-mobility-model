@@ -1,59 +1,44 @@
-# ======================================================
-# Unified Mobility Model Fitting for SnSe
-# Authors: Gbadebo Taofeek Yusuf, Sukhwinder Singh, Alexandros Askounis, Zlatka Stoeva, Fideline Tchuenbou-Magaia
-# Description: Model fitting code for SnSe using semi-empirical mobility model.
-# This code is part of the repository: Unified Mobility Model for Grain-Boundary-Limited Transport
-# ======================================================
-
 import numpy as np
 import matplotlib.pyplot as plt
-from lmfit import Model
+from scipy.optimize import curve_fit
 
-# Experimental SnSe data you provided
-T_data = np.array([300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800])
-mu_exp = np.array([30, 45, 55, 65, 75, 80, 85, 88, 90, 93, 95])
+# Define the unified mobility model (you can refine this as needed)
+def unified_mobility_model(T, mu_w, Phi_GB, w_GB, p):
+    k_B = 8.6173e-5  # Boltzmann constant in eV/K
+    # Thermionic emission and geometric transmission
+    P_GB = np.exp(-Phi_GB / (k_B * T))  # thermionic emission term
+    G_T = (15 / (w_GB + 15))  # Assuming a fixed bulk mean free path for simplicity
+    return mu_w * P_GB * G_T
 
-# Constants
-e = 1.602e-19  # elementary charge in Coulombs
-kB = 1.381e-23  # Boltzmann constant in J/K
-m_e = 9.109e-31  # free electron mass in kg
+# Data for SnSe (temperature and corresponding mobility values)
+T = np.array([300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850])
+mobility = np.array([600, 400, 300, 250, 200, 150, 130, 126, 124, 121, 115, 111])
 
-# Fixed parameters
-m_star = 0.6 * m_e
-p_fixed = 1.6
+# Fit the model to the data (with initial guesses for parameters)
+params_init = [124.41, 0.1, 35.5, 1.5]  # Initial guesses for mu_w, Phi_GB, w_GB, p
+params, covariance = curve_fit(unified_mobility_model, T, mobility, p0=params_init)
 
-# The mobility model function
-def mobility_model(T, phi_GB, l300, w_GB, mu_w):
-    l_T = l300 * (T / 300) ** (-p_fixed)
-    thermionic = np.exp(-phi_GB / (kB * T / e))  # eV to Joules inside exponential
-    geometric = l_T / (l_T + w_GB)
-    return mu_w * thermionic * geometric
+# Extract fitted parameters
+mu_w_fit, Phi_GB_fit, w_GB_fit, p_fit = params
 
-# Set up the lmfit model
-model = Model(mobility_model)
+# Plot the data and the fitted model
+T_fit = np.linspace(min(T), max(T), 1000)  # Generate finer temperature points for smooth fit
+mobility_fit = unified_mobility_model(T_fit, *params)
 
-# Initial parameter guesses
-params = model.make_params(
-    phi_GB=0.08,  # eV
-    l300=20,      # nm
-    w_GB=10,      # nm
-    mu_w=100      # cm^2/V/s (weighted mobility)
-)
-
-# Perform the fit
-result = model.fit(mu_exp, params, T=T_data)
-
-# Print the fitting report
-fit_report = result.fit_report()
-print(fit_report)
-
-# Plotting
 plt.figure(figsize=(8,6))
-plt.plot(T_data, mu_exp, 'bo', label='Experimental Data (SnSe)')
-plt.plot(T_data, result.best_fit, 'r-', label='Model Fit')
-plt.xlabel('Temperature (K)')
-plt.ylabel('Mobility (cm²/V·s)')
-plt.title('SnSe Mobility Fitting')
-plt.legend()
+
+# Plot the experimental data as blue dots
+plt.plot(T, mobility, 'bo', label='SnSe')
+
+# Plot the fitted model as a red curve
+plt.plot(T_fit, mobility_fit, 'r-', label='Model')
+
+# Customize the plot
+plt.xlabel('Temperature (K)', fontsize=12)
+plt.ylabel('Mobility (cm²/V·s)', fontsize=12)
+plt.title('Unified Mobility Model Fit for SnSe', fontsize=14)
 plt.grid(True)
+plt.legend(loc='best')
+
+# Show the plot
 plt.show()
