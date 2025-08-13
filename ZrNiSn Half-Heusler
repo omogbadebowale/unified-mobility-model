@@ -7,38 +7,46 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Constants
-k_B = 8.6173e-5  # Boltzmann constant in eV/K
-T_300 = 300  # Reference temperature in K
+# --- Unified model ---
+k_B = 8.617333262e-5  # eV/K
+T0  = 300.0
 
-# Experimental data
-T = np.array([350, 400, 450, 500, 550, 600, 650, 700, 750, 800])  # Temperature in K
-μ_H = np.array([32, 28, 24, 22, 20, 18, 16, 14, 12, 10])  # Mobility in cm²/V·s
+def l_of_T(T, l300, p):
+    return l300 * (T / T0)**(-p)
 
-# Given values for the unified model
-μ_w = 50  # cm²/V·s
-Φ_GB = 0.001  # eV
-l_300 = 31.39  # nm
-p = 2.28
+def mu_model(T, mu_w, Phi_GB, l300, p, w_GB=11.79):
+    lT = l_of_T(T, l300, p)
+    return mu_w * np.exp(-Phi_GB / (k_B * T)) * (lT / (lT + w_GB))
 
-# Unified mobility model function
-def l_T(T, l_300, p):
-    return l_300 * (T / T_300) ** (-p)
+def plot_like_snse(T, mu_data, params, w_GB=11.79, label='SnSe', title=None, save=None):
+    """params = (mu_w, Phi_GB, l300, p)"""
+    mu_w, Phi_GB, l300, p = params
 
-def mobility_model(T, μ_w, Φ_GB, l_300, p):
-    l_T_values = l_T(T, l_300, p)
-    return μ_w * np.exp(-Φ_GB / (k_B * T)) * l_T_values / (l_T_values + 11.79)  # w_GB = 11.79 nm as placeholder
+    # smooth model curve on a fine grid
+    Tfine = np.linspace(min(T), max(T), 500)
+    mu_fit = mu_model(Tfine, mu_w, Phi_GB, l300, p, w_GB=w_GB)
 
-# Generate fitted values using the given parameters
-μ_H_unified_given = mobility_model(T, μ_w, Φ_GB, l_300, p)
+    # style to mimic the SnSe figure
+    plt.figure(figsize=(6,4.5))
+    plt.plot(Tfine, mu_fit, '-', color='red', lw=2, label='Model')
+    plt.plot(T, mu_data, 'o', ms=6, mec='blue', mfc='white', mew=1.5, color='blue', label=label)
 
-# Plot the data and fitted unified model curve
-plt.figure(figsize=(8, 5))
-plt.plot(T, μ_H, 'bo', label='Experimental data')
-plt.plot(T, μ_H_unified_given, 'r-', label='Fitted Unified Model (given parameters)')
-plt.xlabel('Temperature (K)')
-plt.ylabel('Mobility (cm²/V·s)')
-plt.title('Unified Model Fit for Mobility vs. Temperature for ZrNiSn Half-Heusler (Given Parameters)')
-plt.legend()
-plt.grid(True)
-plt.show()
+    plt.xlabel('T (K)')
+    plt.ylabel(r'$\mu_{\mathrm{eff}}$ (cm$^2$/V·s)')
+    plt.xlim(min(T)-10, max(T)+10)
+    plt.ylim(0, max(max(mu_data), np.max(mu_fit))*1.1)
+    if title:
+        plt.title(title)
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='best', frameon=False)
+    plt.tight_layout()
+    if save:
+        plt.savefig(save, dpi=300)
+    plt.show()
+
+# ---- Example: ZrNiSn numbers you’ve been using ----
+T = np.array([350, 400, 450, 500, 550, 600, 650, 700, 750, 800])
+mu_data = np.array([32, 28, 24, 22, 20, 18, 16, 14, 12, 10])
+
+params = (50.0, 0.001, 31.39, 2.28)  # (mu_w, Phi_GB, l300, p)
+plot_like_snse(T, mu_data, params, w_GB=11.79, label='ZrNiSn', title='ZrNiSn')
