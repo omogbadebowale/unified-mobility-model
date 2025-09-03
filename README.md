@@ -19,9 +19,9 @@ The model is demonstrated on multiple material systems:
 - Bi₂Te₃
 - Mg₂Si
 - SnSe
--Fe₂V₀.₉₅Ta₀.₀₅Al₀.₉₅Si₀.₀₅
--Fe₂VAl₀.₉₅Si₀.₀₅
--ZrNiSn
+-Fe₂V₀.₉₅Ta₀.₀₅Al₀.₉₅Si₀.₀₅;
+-Fe₂VAl₀.₉₅Si₀.₀₅;
+-ZrNiSn.
 ---
 
 
