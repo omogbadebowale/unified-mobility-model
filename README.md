@@ -19,18 +19,13 @@ The model is demonstrated on multiple material systems:
 - Bi₂Te₃
 - Mg₂Si
 - SnSe
-
+-Fe₂V₀.₉₅Ta₀.₀₅Al₀.₉₅Si₀.₀₅
+-Fe₂VAl₀.₉₅Si₀.₀₅
+-ZrNiSn
 ---
 
-## Repository Contents
 
-- `Bi2Te3_Mobility_Model_Fitting.py`
-- `Mg2Si_Mobility_Model_Fitting.py`
-- `SnSe_Mobility_Model_Fitting.py`
-- `ZnO_Mobility_Model_Fitting.py`
-- `CITATION.md`
-- `LICENSE` (MIT License)
-- `requirements.txt`
+-
 
 ---
 
