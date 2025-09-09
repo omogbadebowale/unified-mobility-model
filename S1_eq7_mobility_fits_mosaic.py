@@ -32,289 +32,301 @@
 #   numpy>=1.24, pandas>=2.0, matplotlib>=3.7, scipy>=1.10
 # =============================================================================
 
-# ==== 0) Imports & CLI =======================================================
-import argparse
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Tuple
-
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.optimize import least_squares
+from scipy.optimize import curve_fit
+from pathlib import Path
+import math, json
 
+# --------------- helpers ---------------
+def safe_pow(base, exp, min_base=1e-12):
+    b = np.asarray(base, float)
+    return np.power(np.clip(b, min_base, np.inf), exp)
 
-# ==== 1) Embedded default datasets ===========================================
-# Panel order: (a) Bi2Te3  (b) ZnO  (c) Mg2Si  (d) SnSe  (e) Fe2VAl0.9Si  (f) NbCoSn
-EMBEDDED_DATA = pd.DataFrame(
-    {
-        "Sample": (
-            ["Bi2Te3"] * 9
-            + ["ZnO"] * 15
-            + ["Mg2Si"] * 11
-            + ["SnSe"] * 12
-            + ["Fe2VAl0.9Si"] * 26
-            + ["NbCoSn"] * 9
-        ),
-        "T_K": (
-            # Bi2Te3
-            [100,125,150,175,200,225,250,275,300] +
-            # ZnO
-            [400,450,500,550,600,650,700,750,800,850,900,950,1000,1050,1100] +
-            # Mg2Si
-            [314.2318619,364.0219156,411.1505682,457.4600168,504.8694179,
-             552.760506,600.743472,648.088843,695.9385522,743.5500842,791.5886809] +
-            # SnSe
-            [300,350,400,450,500,550,600,650,700,750,800,850] +
-            # Fe2VAl0.9Si
-            [58.4,73.9,91.3,108,124.5,141.8,157.7,175.1,191.6,208.2,225.6,241.2,
-             258.8,275.2,291.8,309.3,325.1,342.4,359.8,375.7,393,408.7,426.1,443.5,459.3,476.5] +
-            # NbCoSn
-            [300,350,400,450,500,550,600,650,700]
-        ),
-        "mu_cm2V_s": (
-            # Bi2Te3
-            [1000,950,890,830,770,700,630,550,470] +
-            # ZnO
-            [12,13,14,14,14,14,16,18,20,21,22,23,23,24,25] +
-            # Mg2Si
-            [136.3864764,125.2822581,113.7903226,107.1520311,95.5319751,
-             83.8831406,72.35243651,66.26099707,60.43757467,54.65800478,48.79190386] +
-            # SnSe
-            [600,400,300,250,200,150,130,126,124,121,115,111] +
-            # Fe2VAl0.9Si
-            [53.7,52.3,49.7,43.7,38.6,34.1,30.8,26.5,24.1,22,21.1,18,17.5,15.6,14,
-             11.9,10.8,9.5,8.9,7.8,7.2,6.6,5.8,4.9,4.2,4.1] +
-            # NbCoSn
-            [438.18,383.41,346.89,319.5,292.12,273.86,237.35,219.09,200.83]
-        ),
-    }
-)
+def sanitize_xy(T, y):
+    T = np.asarray(T, float); y = np.asarray(y, float)
+    m = np.isfinite(T) & np.isfinite(y) & (T > 0)
+    T, y = T[m], y[m]
+    o = np.argsort(T)
+    return T[o], y[o]
 
+def fit_metrics(y, yhat, k_params):
+    resid = y - yhat
+    rss = float(np.sum(resid**2))
+    tss = float(np.sum((y - np.mean(y))**2))
+    r2  = 1.0 - rss/tss if tss > 0 else np.nan
+    n   = len(y)
+    aic = 2*k_params + n*math.log(max(rss/n, 1e-300))
+    aicc = aic + (2*k_params*(k_params+1))/max(n - k_params - 1, 1e-9)
+    bic = k_params*math.log(max(n,1)) + n*math.log(max(rss/n, 1e-300))
+    return r2, aicc, bic
 
-# ==== 2) Model (Eq. 7) and helpers ===========================================
+# --------------- model ---------------
 kB = 8.617333262e-5  # eV/K
 
-def mu_eq7(T, PhiGB, ell300, wGB, p, muw0):
-    """Unified mobility model (Eq. 7)."""
-    T = np.asarray(T, float)
-    ellT = ell300 * (T/300.0)**(-p)
-    return muw0 * np.exp(-PhiGB/(kB*T)) * (ellT/(ellT + wGB))
+def l_of_T(T, l300, p):
+    return l300 * safe_pow(T/300.0, -p)
 
-def r2(y, yhat):
-    y = np.asarray(y); yhat = np.asarray(yhat)
-    ss_res = np.sum((y - yhat)**2)
-    ss_tot = np.sum((y - np.mean(y))**2)
-    return 1 - ss_res/ss_tot if ss_tot > 0 else np.nan
+def mu_w_of_T(T, mu0, q):
+    return mu0 * safe_pow(T/300.0, -q)
 
-def mad_sigma(x):
-    x = np.asarray(x)
-    med = np.median(x)
-    mad = np.median(np.abs(x - med)) + 1e-12
-    return 1.4826 * mad
+def mu_eff_model(T, mu0, q, Phi, l300, p, wGB):
+    lT = l_of_T(T, l300, p)
+    G  = lT / (lT + wGB)
+    return mu_w_of_T(T, mu0, q) * np.exp(-Phi/(kB*T)) * G
 
-def s2b(x, lo, hi):  # sigmoid -> bounded
-    return lo + (hi - lo) / (1 + np.exp(-x))
+# --------------- fitting ---------------
+def fit_best_spec(T, mu, wGB_grid, p_grid):
+    T, mu = sanitize_xy(T, mu)
+    best = None
+    for wGB in wGB_grid:
+        for p_fixed in p_grid:
+            def f(T, mu0, q, Phi, l300):
+                return mu_eff_model(T, mu0, q, Phi, l300, p_fixed, wGB)
+            p0     = [max(mu[0], 1.0), 0.6, 0.02, 30.0]
+            bounds = ([0.0, -2.0, 0.0,  5.0],
+                      [1e6,  2.0, 0.25, 500.0])
+            try:
+                popt, _ = curve_fit(f, T, mu, p0=p0, bounds=bounds, maxfev=800000)
+                yhat = f(T, *popt)
+                r2, aicc, bic = fit_metrics(mu, yhat, k_params=4)
+                cand = dict(
+                    r2=r2, aicc=aicc, bic=bic, T=T, mu=mu, yhat=yhat,
+                    params=dict(mu0=float(popt[0]), q=float(popt[1]), Phi=float(popt[2]),
+                                l300=float(popt[3]), p=float(p_fixed), wGB=float(wGB)),
+                    spec=f"wGB={wGB:g} nm, p={p_fixed:g}"
+                )
+                if best is None or cand["aicc"] < best["aicc"]:
+                    best = cand
+            except Exception:
+                pass
+    if best is None:
+        raise RuntimeError("No successful fit — widen grids.")
+    return best
 
-def b2s(y, lo, hi):  # inverse of s2b
-    y = np.clip((y - lo) / (hi - lo), 1e-9, 1 - 1e-9)
-    return np.log(y/(1 - y))
+# --------------- data ---------------
+datasets = [
+    ("ZnO: Ta-doped (~3%)",
+     np.array([305.1020408,371.9954649,422.4489796,471.7687075,522.2222222,
+               570.9750567,621.4285714,671.8820862,721.7687075,770.521542], float),
+     np.array([23.63489499,20.63004847,19.75767367,15.97738288,14.62035541,
+               12.48788368,10.93699515,9.095315024,7.641357027,5.799676898], float)),
+    ("Bi$_2$Te$_3$",
+     np.array([175,200,225,250,275,300], float),
+     np.array([116.2,105.0,93.34,83.25,78.4,64.37], float)),
+    ("Mg$_2$Si (baseline)",
+     np.array([316.8350168,362.8507295,407.7441077,452.0763187,494.1638608,
+               532.3232323,573.28844,607.5196409,643.4343434,673.1762065,
+               705.1627385,732.6599327,754.5454545], float),
+     np.array([121.6438356,115.6164384,112.3287671,103.2876712,93.69863014,
+               84.65753425,78.96678967,74.24354244,68.78228782,62.43542435,
+               57.71217712,53.72693727,49.15129151], float)),
+    ("Mg$_2$Si (1% Sb)",
+     np.array([348.2603816,431.3131313,495.8473625,554.2087542,603.030303,
+               650.7295174,691.1335578,716.9472503], float),
+     np.array([84.31818182,82.95454545,82.04545455,74.26470588,67.05882353,
+               62.35294118,56.32352941,50.58823529], float)),
+    ("SnSe",
+     np.array([299.3702771,322.0403023,372.418136,424.0554156,471.2846348,
+               521.0327456,570.7808564,623.0478589,674.6851385,721.9143577], float),
+     np.array([159.4594595,142.3423423,109.9099099,83.78378378,63.96396396,
+               49.54954955,40.54054054,32.43243243,28.82882883,27.02702703], float)),
+    ("Fe$_2$V$_{0.95}$Ta$_{0.05}$Al$_{0.95}$Si$_{0.05}$",
+     np.array([2.159827214,19.43844492,37.79697624,58.31533477,77.7537797,
+               100.4319654,119.8704104,140.3887689,158.7473002,200.8639309,
+               222.462203,238.6609071,255.9395248,275.3779698,300.2159827,
+               316.4146868,340.1727862,354.2116631,375.8099352,399.5680346,
+               420.0863931,436.2850972,457.8833693], float),
+     np.array([33.45821326,33.19884726,31.90201729,30.43227666,28.27089337,
+               25.41786744,23.17002882,20.66282421,18.84726225,15.38904899,
+               14.17867435,12.53602305,11.06628242,9.423631124,7.867435159,
+               5.706051873,4.495677233,2.853025937,2.42074928,1.902017291,
+               1.383285303,0.518731988,0.432276657], float)),
+    ("Fe$_2$VAl$_{0.95}$Si$_{0.05}$",
+     np.array([4.319654428,21.59827214,37.79697624,58.31533477,80.99352052,
+               97.19222462,122.0302376,141.4686825,157.6673866,198.7041037,
+               178.1857451,215.9827214,238.6609071,259.1792657,278.6177106,
+               301.2958963,316.4146868,339.0928726,358.5313175,381.2095032,
+               399.5680346,423.3261339,441.6846652,456.8034557,479.4816415,
+               492.4406048,512.9589633], float),
+     np.array([55.5907781,53.25648415,51.78674352,49.10662824,42.79538905,
+               37.26224784,32.50720461,28.6167147,24.46685879,19.88472622,
+               22.04610951,18.41498559,15.64841499,14.870317,12.53602305,
+               10.7204611,9.250720461,7.694524496,6.484149856,5.53314121,
+               4.755043228,3.976945245,3.112391931,2.593659942,1.469740634,
+               0.951008646,0.518731988], float)),
+    ("ZrNiSn (dense polycrystal)",
+     np.array([284.1845303,336.5733539,405.7660999,454.2010372,510.5436716,
+               540.1977056,626.1943741,655.8484081,691.4333092,720.0988151,
+               744.8105101,770.5107333,799.1762391,823.8879341,870.345966], float),
+     np.array([33.91691245,33.91691245,31.91394751,31.69139334,30.94955363,
+               27.90801198,26.64688392,26.86943526,24.12463062,23.53115659,
+               23.53115659,22.9376854,21.6023745,20.56379778,19.6735924], float))
+]
 
+def grids_for(name):
+    if "ZnO" in name:
+        return (6,8,10,12,15), (1.8,2.0,2.2)
+    if "Bi" in name:
+        return (50,100,200), (1.2,1.5,1.8)
+    if "ZrNiSn" in name:
+        return (15,20,30,40), (0.5,0.6,0.8,1.0)
+    return (10,15,20,30,40), (1.5,1.8,2.0,2.2)
 
-# ==== 3) Fit configuration (physically constrained, robust) ==================
-@dataclass
-class FitConfig:
-    PHI_LO: float = 0.0
-    PHI_HI: float = 0.20
-    P_LO: float   = 1.4
-    P_HI: float   = 2.6
-    PRIOR_WEIGHT: float = 0.5  # gentle priors to avoid degeneracy
-    # Priors in native/log spaces
-    phi_prior: Tuple[float,float]     = (0.03, 0.05)       # eV
-    log_ell_prior: Tuple[float,float] = (np.log(40.), 0.8) # ln(nm)
-    log_w_prior:   Tuple[float,float] = (np.log(15.), 0.8) # ln(nm)
-    p_prior: Tuple[float,float]       = (2.0, 0.4)
+# --------------- fit all ---------------
+fits = []
+for name, T, mu in datasets:
+    wgrid, pgrid = grids_for(name)
+    best = fit_best_spec(T, mu, wGB_grid=wgrid, p_grid=pgrid)
+    fits.append((name, best))
+fitmap = {name: bf for name, bf in fits}
 
+# --------------- styling ---------------
+plt.rcParams.update({
+    "font.size": 10.5,
+    "font.family": "serif",
+    "axes.labelsize": 11,
+    "axes.titlesize": 11,
+    "xtick.direction": "in", "ytick.direction": "in",
+    "xtick.minor.visible": False, "ytick.minor.visible": False,
+    "xtick.major.size": 3.0, "ytick.major.size": 3.0,
+})
 
-# ==== 4) Single-sample fit ====================================================
-def fit_sample(T, mu, cfg: FitConfig = FitConfig()) -> Dict:
-    """
-    Robust, physics-constrained fit for one dataset.
-    Returns dict with parameters, R2, and a dense curve for plotting.
-    """
-    T = np.asarray(T, float); mu = np.asarray(mu, float)
-    pri_log_muw = np.log(max(1.0, float(np.median(mu))))
-    theta = np.array([
-        b2s(0.05, cfg.PHI_LO, cfg.PHI_HI),  # x_phi
-        np.log(40.0),                       # log_ell
-        np.log(15.0),                       # log_w
-        b2s(2.0, cfg.P_LO, cfg.P_HI),       # x_p
-        pri_log_muw                         # log_muw0
-    ], float)
+BLUE  = "#1f77b4"   # data A
+BLACK = "#222222"   # data B
+RED   = "#c62828"   # fit A
+GRAY  = "#616161"   # fit B
+MARK_MS, MARK_MEW, FIT_LW = 4.2, 1.2, 2.0
 
-    def unpack(th):
-        x_phi, log_ell, log_w, x_p, log_muw = th
-        Phi = s2b(x_phi, cfg.PHI_LO, cfg.PHI_HI)
-        ell = float(np.exp(log_ell))
-        w   = float(np.exp(log_w))
-        p   = s2b(x_p, cfg.P_LO, cfg.P_HI)
-        muw = float(np.exp(log_muw))
-        return Phi, ell, w, p, muw
+def panel_box(ax):
+    for side in ("top","right","bottom","left"):
+        ax.spines[side].set_visible(True)
+        ax.spines[side].set_linewidth(1.0)
+    ax.tick_params(which="both", direction="in", length=3.0, width=1.0, top=True, right=True)
 
-    def residuals(th):
-        Phi, ell, w, p, muw = unpack(th)
-        mu_hat = mu_eq7(T, Phi, ell, w, p, muw)
-        sig_y = mad_sigma(mu)
-        if not np.isfinite(sig_y) or sig_y < 1e-9:
-            sig_y = max(1.0, 0.05*(mu.max() - mu.min()))
-        res_data = (mu_hat - mu) / sig_y
-        # Weak priors for identifiability:
-        res_prior = cfg.PRIOR_WEIGHT * np.array([
-            (Phi - cfg.phi_prior[0])       / cfg.phi_prior[1],
-            (th[1] - cfg.log_ell_prior[0]) / cfg.log_ell_prior[1],
-            (th[2] - cfg.log_w_prior[0])   / cfg.log_w_prior[1],
-            (p     - cfg.p_prior[0])       / cfg.p_prior[1],
-            (th[4] - pri_log_muw) / 1.0
-        ])
-        return np.concatenate([res_data, res_prior])
+def mu_eff_from_params(Tx, P):
+    lT = l_of_T(Tx, P["l300"], P["p"])
+    G  = lT/(lT + P["wGB"])
+    return mu_w_of_T(Tx, P["mu0"], P["q"]) * np.exp(-P["Phi"]/(kB*Tx)) * G
 
-    sol = least_squares(residuals, theta, loss="soft_l1", f_scale=1.0, max_nfev=400000)
-    Phi, ell, w, p, muw = unpack(sol.x)
-    mu_fit = mu_eq7(T, Phi, ell, w, p, muw)
-    T_dense = np.linspace(T.min(), T.max(), 400)
-    mu_dense = mu_eq7(T_dense, Phi, ell, w, p, muw)
-    return dict(
-        PhiGB_eV=float(Phi), ell300_nm=float(ell), wGB_nm=float(w),
-        p=float(p), muw0_cm2Vs=float(muw), R2=float(r2(mu, mu_fit)),
-        T_dense=T_dense, mu_dense=mu_dense
-    )
+# ---- Corner chooser and R² placement (single / stacked) ----
+def _corner_and_rect(ax, xfit, yfit):
+    xfit, yfit = np.asarray(xfit), np.asarray(yfit)
+    xmin, xmax = ax.get_xlim(); ymin, ymax = ax.get_ylim()
+    xr, yr = xmax - xmin, ymax - ymin
+    pads = 0.03; wrel, hrel = 0.22, 0.18
+    rects = {
+        "tl": (xmin + pads*xr, ymin + (1-hrel-pads)*yr, wrel*xr, hrel*yr),
+        "tr": (xmax - (wrel+pads)*xr, ymin + (1-hrel-pads)*yr, wrel*xr, hrel*yr),
+        "bl": (xmin + pads*xr, ymin + pads*yr, wrel*xr, hrel*yr),
+        "br": (xmax - (wrel+pads)*xr, ymin + pads*yr, wrel*xr, hrel*yr)
+    }
+    counts = {}
+    for key, (x0,y0,w,h) in rects.items():
+        inside = (xfit>=x0) & (xfit<=x0+w) & (yfit>=y0) & (yfit<=y0+h)
+        counts[key] = int(np.count_nonzero(inside))
+    corner = min(counts, key=counts.get)
+    return corner, rects[corner]
 
+def place_r2(ax, xfit, yfit, text, color="black"):
+    corner, (x0,y0,w,h) = _corner_and_rect(ax, xfit, yfit)
+    ax.text(x0 + 0.02*w, y0 + 0.78*h, text,
+            ha="left", va="top", fontsize=10, color=color,
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.85, linewidth=0.0))
 
-# ==== 5) Plotting (2×3 square panels) ========================================
-def plot_2x3(panels, fits, out_png, out_pdf, panel_size=3.15, dpi=600):
-    """Square, publication-grade 2×3 composite with centered panel letters."""
-    labels = ["(a)","(b)","(c)","(d)","(e)","(f)"]
-    plt.rcParams.update({
-        "font.size": 10, "axes.labelsize": 10, "axes.titlesize": 10,
-        "legend.fontsize": 9, "xtick.labelsize": 9, "ytick.labelsize": 9,
-        "lines.linewidth": 2.0
-    })
-    fig, axes = plt.subplots(2, 3, figsize=(3*panel_size, 2*panel_size),
-                             gridspec_kw={"hspace": 0.55, "wspace": 0.32})
-    axes = axes.ravel()
-    for i, (name, T, mu) in enumerate(panels):
-        ax = axes[i]; ax.set_box_aspect(1)
-        f = fits[name]
-        ax.plot(T, mu, 'o', mfc='none', mec='blue', mew=1.2, ms=4.6, linestyle='None', label="Data")
-        ax.plot(f["T_dense"], f["mu_dense"], color='red', label="Fit")
-        ax.text(0.50, 0.98, labels[i], transform=ax.transAxes, ha="center", va="top",
-                fontsize=11, fontweight="bold",
-                bbox=dict(facecolor="white", edgecolor="none", boxstyle="round,pad=0.15", alpha=0.9))
-        ax.set_title(f"{name}  (R$^2$={f['R2']:.3f})")
-        xpad = 0.03*(T.max()-T.min()); ypad = 0.12*(mu.max()-mu.min())
-        ax.set_xlim(T.min()-xpad, T.max()+xpad); ax.set_ylim(mu.min()-ypad, mu.max()+ypad)
-        ax.minorticks_on(); ax.tick_params(direction="out", length=4, width=1)
-        ax.legend(frameon=False, loc="best")
-    for j in [3,4,5]: axes[j].set_xlabel("T (K)")
-    for j in [0,3]:   axes[j].set_ylabel(r"$\mu_{\mathrm{eff}}$ (cm$^2$ V$^{-1}$ s$^{-1}$)")
-    fig.savefig(out_png, dpi=dpi, facecolor="white"); fig.savefig(out_pdf, dpi=dpi)
-    return fig
+def place_r2_pair(ax, xfit_top, yfit_top, text_top, color_top,
+                        xfit_bot, yfit_bot, text_bot, color_bot):
+    # choose least-occupied corner using the TOP series fit, then stack both
+    corner, (x0,y0,w,h) = _corner_and_rect(ax, xfit_top, yfit_top)
+    ax.text(x0 + 0.02*w, y0 + 0.78*h, text_top,
+            ha="left", va="top", fontsize=10, color=color_top,
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.85, linewidth=0.0))
+    ax.text(x0 + 0.02*w, y0 + 0.48*h, text_bot,
+            ha="left", va="top", fontsize=10, color=color_bot,
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.85, linewidth=0.0))
 
+# --------------- figure ---------------
+labels = ["a","b","c","d","e","f"]
+nrows, ncols = 2, 3
+fig, axs = plt.subplots(nrows, ncols, figsize=(9.6, 6.4), constrained_layout=True, facecolor="white")
 
-# ==== 6) Utilities ============================================================
-def fmt_phi(x: float) -> str:
-    return "≈0" if x < 1e-3 else f"{x:.3f}"
+def draw_single(ax, label, name):
+    bf = fitmap[name]
+    T, mu, P = bf["T"], bf["mu"], bf["params"]
+    Tfine = np.linspace(max(1.0, T.min()), T.max(), 1200)
+    fit = mu_eff_from_params(Tfine, P)
+    ax.plot(T, mu, linestyle="none", marker="o", ms=MARK_MS, mfc="white", mec=BLUE, mew=MARK_MEW, color=BLUE)
+    ax.plot(Tfine, fit, lw=FIT_LW, color=RED)
+    panel_box(ax)
+    ax.text(0.5, 1.02, f"({label})", transform=ax.transAxes, ha="center", va="bottom", fontweight="bold")
+    ax.set_xlabel("T (K)"); ax.set_ylabel(r"$\mu_{\mathrm{eff}}$ (cm$^2$ V$^{-1}$ s$^{-1}$)")
+    place_r2(ax, Tfine, fit, fr"$R^2={bf['r2']:.3f}$", color=RED)
 
-def fmt3(x: float) -> str:
-    return f"{x:.3f}"
+# (a)–(b)
+draw_single(axs[0,0], "a", "ZnO: Ta-doped (~3%)")
+draw_single(axs[0,1], "b", "Bi$_2$Te$_3$")
 
-def load_data_from_csv(csv_path: Path) -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
-    need = {"Sample","T_K","mu_cm2V_s"}
-    if not need.issubset(df.columns):
-        missing = ", ".join(sorted(need - set(df.columns)))
-        raise ValueError(f"CSV missing required columns: {missing}")
-    return df[["Sample","T_K","mu_cm2V_s"]].copy()
+# (c) Mg2Si — two series, STACKED R², no legend
+ax_c = axs[0,2]
+bfA = fitmap["Mg$_2$Si (baseline)"]
+bfB = fitmap["Mg$_2$Si (1% Sb)"]
+TA, muA, PA = bfA["T"], bfA["mu"], bfA["params"]; TAf = np.linspace(max(1.0, TA.min()), TA.max(), 1200); fitA = mu_eff_from_params(TAf, PA)
+TB, muB, PB = bfB["T"], bfB["mu"], bfB["params"]; TBf = np.linspace(max(1.0, TB.min()), TB.max(), 1200); fitB = mu_eff_from_params(TBf, PB)
+ax_c.plot(TA, muA, linestyle="none", marker="o", ms=MARK_MS, mfc="white", mec=BLUE,  mew=MARK_MEW, color=BLUE)
+ax_c.plot(TAf, fitA, lw=FIT_LW, color=RED)
+ax_c.plot(TB, muB, linestyle="none", marker="s", ms=MARK_MS, mfc="white", mec=BLACK, mew=MARK_MEW, color=BLACK)
+ax_c.plot(TBf, fitB, lw=FIT_LW, color=GRAY)
+panel_box(ax_c); ax_c.text(0.5, 1.02, "(c)", transform=ax_c.transAxes, ha="center", va="bottom", fontweight="bold")
+ax_c.set_xlabel("T (K)"); ax_c.set_ylabel(r"$\mu_{\mathrm{eff}}$ (cm$^2$ V$^{-1}$ s$^{-1}$)")
+place_r2_pair(ax_c, TAf, fitA, fr"$R^2={bfA['r2']:.3f}$", RED, TBf, fitB, fr"$R^2={bfB['r2']:.3f}$", GRAY)
 
+# (d)
+draw_single(axs[1,0], "d", "SnSe")
 
-# ==== 7) Main: fit, save table, save figure ==================================
-def main(args):
-    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
+# (e) Fe2V — two series, STACKED R², no legend
+ax_e = axs[1,1]
+nm_n = "Fe$_2$V$_{0.95}$Ta$_{0.05}$Al$_{0.95}$Si$_{0.05}$"
+nm_p = "Fe$_2$VAl$_{0.95}$Si$_{0.05}$"
+bf_n, bf_p = fitmap[nm_n], fitmap[nm_p]
+Tn, mun, Pn = bf_n["T"], bf_n["mu"], bf_n["params"]; Tnf = np.linspace(max(1.0, Tn.min()), Tn.max(), 1200); fitn = mu_eff_from_params(Tnf, Pn)
+Tp, mup, Pp = bf_p["T"], bf_p["mu"], bf_p["params"]; Tpf = np.linspace(max(1.0, Tp.min()), Tp.max(), 1200); fitp = mu_eff_from_params(Tpf, Pp)
+ax_e.plot(Tn, mun, linestyle="none", marker="o", ms=MARK_MS, mfc="white", mec=BLUE,  mew=MARK_MEW, color=BLUE)
+ax_e.plot(Tnf, fitn, lw=FIT_LW, color=RED)
+ax_e.plot(Tp, mup, linestyle="none", marker="s", ms=MARK_MS, mfc="white", mec=BLACK, mew=MARK_MEW, color=BLACK)
+ax_e.plot(Tpf, fitp, lw=FIT_LW, color=GRAY)
+panel_box(ax_e); ax_e.text(0.5, 1.02, "(e)", transform=ax_e.transAxes, ha="center", va="bottom", fontweight="bold")
+ax_e.set_xlabel("T (K)"); ax_e.set_ylabel(r"$\mu_{\mathrm{eff}}$ (cm$^2$ V$^{-1}$ s$^{-1}$)")
+place_r2_pair(ax_e, Tnf, fitn, fr"$R^2={bf_n['r2']:.3f}$", RED, Tpf, fitp, fr"$R^2={bf_p['r2']:.3f}$", GRAY)
 
-    # data
-    if args.csv is None:
-        data = EMBEDDED_DATA.copy()
-    else:
-        data = load_data_from_csv(Path(args.csv))
+# (f)
+draw_single(axs[1,2], "f", "ZrNiSn (dense polycrystal)")
 
-    # enforce manuscript panel order:
-    order = ["Bi2Te3","ZnO","Mg2Si","SnSe","Fe2VAl0.9Si","NbCoSn"]
+# remove duplicate y labels on top row for compactness
+axs[0,1].set_ylabel(""); axs[0,2].set_ylabel("")
 
-    fits: Dict[str, Dict] = {}
-    panels = []
-    for name in order:
-        df = data[data["Sample"] == name]
-        if df.empty:
-            raise ValueError(f"No rows found for sample '{name}' in the input data.")
-        T = df["T_K"].to_numpy(float)
-        mu = df["mu_cm2V_s"].to_numpy(float)
-        res = fit_sample(T, mu); fits[name] = res
-        panels.append((name, T, mu))
+# --------------- save ---------------
+out_dir = Path("./mosaic_final_stackedR2"); out_dir.mkdir(parents=True, exist_ok=True)
+fig = plt.gcf()
+fig.savefig(out_dir/"mobility_fits_mosaic.png", dpi=800, bbox_inches="tight")
+fig.savefig(out_dir/"mobility_fits_mosaic.pdf",            bbox_inches="tight")
+fig.savefig(out_dir/"mobility_fits_mosaic.jpg", dpi=800,   bbox_inches="tight")
+fig.savefig(out_dir/"mobility_fits_mosaic.svg",            bbox_inches="tight")
+plt.show()
+print("Saved to:", out_dir.resolve())
 
-    # tidy parameter table
-    table = pd.DataFrame(
-        [{"Sample": n, **{k:v for k,v in d.items() if k not in ("T_dense","mu_dense")}}
-         for n,d in fits.items()]
-    )
-
-    # pretty print to console
-    show = table.copy()
-    print("\nFitted parameters (robust, constrained):\n")
-    print(show.assign(
-        PhiGB_eV   = show["PhiGB_eV"].apply(fmt_phi),
-        ell300_nm  = show["ell300_nm"].apply(fmt3),
-        wGB_nm     = show["wGB_nm"].apply(fmt3),
-        p          = show["p"].apply(fmt3),
-        muw0_cm2Vs = show["muw0_cm2Vs"].apply(fmt3),
-        R2         = show["R2"].apply(fmt3)
-    )[["Sample","PhiGB_eV","ell300_nm","wGB_nm","p","muw0_cm2Vs","R2"]].to_string(index=False))
-
-    # save raw numeric table
-    table.to_csv(outdir/"physical_MAP_parameters.csv", index=False)
-
-    # figure
-    plot_2x3(panels, fits,
-             out_png = outdir/"Fig_2x3_physical_MAP.png",
-             out_pdf = outdir/"Fig_2x3_physical_MAP.pdf",
-             panel_size=args.panel, dpi=args.dpi)
-
-    print("\nWrote:", outdir/"physical_MAP_parameters.csv")
-    print("Wrote:", outdir/"Fig_2x3_physical_MAP.png")
-    print("Wrote:", outdir/"Fig_2x3_physical_MAP.pdf")
-
-
-# ==== 8) Entry point (Jupyter/CLI-safe) ======================================
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Reproduce unified mobility fits (Eq. 7) and the 2×3 figure."
-    )
-    parser.add_argument("--csv", type=str, default=None,
-                        help="Optional CSV with columns: Sample,T_K,mu_cm2V_s")
-    parser.add_argument("--outdir", type=str, default="outputs",
-                        help="Directory for outputs (default: outputs)")
-    parser.add_argument("--dpi", type=int, default=600, help="Figure DPI")
-    parser.add_argument("--panel", type=float, default=3.15,
-                        help="Panel size in inches (square)")
-
-    # parse_known_args lets this script run inside Jupyter (ignores '-f ...json')
-    args, unknown = parser.parse_known_args()
-
-    # Only print a notice if unknown args are not the standard Jupyter ones
-    def _is_jupyter_noise(seq):
-        # Jupyter typically passes: ['-f', '...kernel-<id>.json']
-        return any(x == "-f" for x in seq) and any(str(x).endswith(".json") for x in seq)
-
-    if unknown and not _is_jupyter_noise(unknown):
-        print(f"Ignoring unknown arguments: {unknown}")
-
-    main(args)
+# (optional) export SI series/params for combined panels
+for nm in (nm_n, nm_p, "ZrNiSn (dense polycrystal)"):
+    bf = fitmap[nm]
+    T = bf["T"]; P = bf["params"]
+    Tf = np.linspace(max(1.0, T.min()), T.max(), 800)
+    lT = l_of_T(Tf, P["l300"], P["p"]); G = lT/(lT + P["wGB"])
+    muf = mu_w_of_T(Tf, P["mu0"], P["q"]) * np.exp(-P["Phi"]/(kB*Tf)) * G
+    stem = (nm.replace(" ", "_")
+              .replace("(", "").replace(")", "")
+              .replace("$", "").replace("\\", "")
+              .replace("{", "").replace("}", ""))
+    np.savetxt(out_dir/f"{stem}__fit_series.csv",
+               np.column_stack([Tf, muf]),
+               header="T_K,mu_fit_cm2_per_Vs", delimiter=",", comments="")
+    with open(out_dir/f"{stem}__fit_params.json","w") as f:
+        json.dump(dict(name=nm, **P, R2=bf["r2"], spec=bf["spec"]), f, indent=2)
