@@ -1,1 +1,141 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+import math
+import pandas as pd
+
+# --------------- helpers ---------------
+def safe_pow(base, exp, min_base=1e-12):
+    b = np.asarray(base, float)
+    return np.power(np.clip(b, min_base, np.inf), exp)
+
+def sanitize_xy(T, y):
+    T = np.asarray(T, float); y = np.asarray(y, float)
+    m = np.isfinite(T) & np.isfinite(y) & (T > 0)
+    T, y = T[m], y[m]
+    o = np.argsort(T)
+    return T[o], y[o]
+
+def fit_metrics(y, yhat, k_params):
+    resid = y - yhat
+    rss = float(np.sum(resid**2))
+    tss = float(np.sum((y - np.mean(y))**2))
+    r2  = 1.0 - rss/tss if tss > 0 else np.nan
+    n   = len(y)
+    aic = 2*k_params + n*math.log(max(rss/n, 1e-300))
+    aicc = aic + (2*k_params*(k_params+1))/max(n - k_params - 1, 1e-9)
+    bic = k_params*math.log(max(n,1)) + n*math.log(max(rss/n, 1e-300))
+    return r2, aicc, bic
+
+# --------------- model ---------------
+kB = 8.617333262e-5  # eV/K
+
+def l_of_T(T, l300, p):
+    return l300 * safe_pow(T/300.0, -p)
+
+def mu_w_of_T(T, mu0, q):
+    return mu0 * safe_pow(T/300.0, -q)
+
+def mu_eff_model(T, mu0, q, Phi, l300, p, wGB):
+    lT = l_of_T(T, l300, p)
+    G  = lT / (lT + wGB)
+    return mu_w_of_T(T, mu0, q) * np.exp(-Phi/(kB*T)) * G
+
+# --------------- fitting ---------------
+def fit_best_spec(T, mu, wGB_grid, p_grid, material_name):
+    T, mu = sanitize_xy(T, mu)
+    best = None
+    for wGB in wGB_grid:
+        for p_fixed in p_grid:
+            def f(T, mu0, q, Phi, l300):
+                return mu_eff_model(T, mu0, q, Phi, l300, p_fixed, wGB)
+            p0     = [max(mu[0], 1.0), 0.6, 0.02, 30.0]
+            bounds = ([0.0, -2.0, 0.0,  5.0],
+                      [1e6,  2.0, 0.25, 500.0])
+            try:
+                popt, pcov = curve_fit(f, T, mu, p0=p0, bounds=bounds, maxfev=800000)
+                yhat = f(T, *popt)
+                r2, aicc, bic = fit_metrics(mu, yhat, k_params=4)
+                # Extract uncertainties from the covariance matrix
+                perr = np.sqrt(np.diag(pcov))
+
+                # Store the fitted parameters and their uncertainties
+                cand = dict(
+                    r2=r2, aicc=aicc, bic=bic, T=T, mu=mu, yhat=yhat,
+                    params=dict(mu0=float(popt[0]), q=float(popt[1]), Phi=float(popt[2]),
+                                l300=float(popt[3]), p=float(p_fixed), wGB=float(wGB)),
+                    spec=f"wGB={wGB:g} nm, p={p_fixed:g}",
+                    # Include parameter uncertainties in the dictionary
+                    uncertainties=dict(mu0_uncertainty=perr[0], q_uncertainty=perr[1],
+                                       Phi_uncertainty=perr[2], l300_uncertainty=perr[3])
+                )
+
+                if best is None or cand["aicc"] < best["aicc"]:
+                    best = cand
+            except Exception:
+                pass
+    if best is None:
+        raise RuntimeError("No successful fit — widen grids.")
+
+    # Print fitted parameters to console with uncertainties
+    print(f"Fitting parameters for {material_name}:")
+    print(f"ΦGB (eV): {best['params']['Phi']:.3f} ± {best['uncertainties']['Phi_uncertainty']:.3f}")
+    print(f"ℓ₃₀₀ (nm): {best['params']['l300']:.1f} ± {best['uncertainties']['l300_uncertainty']:.1f}")
+    print(f"wGB (nm): {best['params']['wGB']:.1f}")
+    print(f"p: {best['params']['p']:.2f}")
+    print(f"R²: {best['r2']:.3f}")
+    
+    # Plotting the fitted curve
+    Tfine = np.linspace(max(1.0, T.min()), T.max(), 1200)
+    fit = mu_eff_model(Tfine, best['params']['mu0'], best['params']['q'], best['params']['Phi'], 
+                       best['params']['l300'], best['params']['p'], best['params']['wGB'])
+    
+    plt.figure(figsize=(8,6))
+    plt.plot(T, mu, 'o', label='Data', color="blue")
+    plt.plot(Tfine, fit, label='Fitted curve', color="red")
+    plt.xlabel('Temperature (K)')
+    plt.ylabel(r'$\mu_{\mathrm{eff}}$ (cm$^2$ V$^{-1}$ s$^{-1}$)')
+    plt.title(f'Fit for {material_name}')
+    plt.legend()
+    plt.show()
+
+    return best
+
+# --------------- Bi2Te3 data ---------------
+name = "Bi₂Te₃"
+T = np.array([175,200,225,250,275,300], float)
+mu = np.array([116.2,105.0,93.34,83.25,78.4,64.37], float)
+
+# --------------- Fit Bi₂Te₃ data ---------------
+wgrid, pgrid = (50,100,200), (1.2,1.5,1.8)
+best = fit_best_spec(T, mu, wGB_grid=wgrid, p_grid=pgrid, material_name=name)
+
+# --------------- Save all fitted parameters for all materials ---------------
+def save_fitted_params_to_csv(fitmap):
+    # Prepare the CSV data
+    params_data = []
+    for material, fit_data in fitmap.items():
+        params = fit_data['params']
+        params_data.append([
+            material,
+            f"{params['Phi']:.3f} ± {fit_data['uncertainties']['Phi_uncertainty']:.3f}",
+            f"{params['l300']:.1f} ± {fit_data['uncertainties']['l300_uncertainty']:.1f}",
+            f"{params['wGB']:.1f}",
+            f"{params['p']:.2f}",
+            f"{fit_data['r2']:.3f}"
+        ])
+    
+    # Column names
+    columns = ['Material', 'ΦGB (eV)', 'ℓ₃₀₀ (nm)', 'wGB (nm)', 'p', 'R²']
+    
+    # Create a DataFrame
+    df = pd.DataFrame(params_data, columns=columns)
+    
+    # Save to CSV
+    output_path = 'fitted_parameters.csv'
+    df.to_csv(output_path, index=False)
+    print(f"Fitted parameters saved to {output_path}")
+
+# Save fitted parameters to CSV
+save_fitted_params_to_csv(fitmap)
 
